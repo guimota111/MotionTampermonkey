@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meus Scripts Tampermonkey</title>
+  <meta name="description" content="Organizador pessoal de scripts do Tampermonkey por categorias, versões e changelog." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐵</text></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-logo">🐵</span>
+        <div>
+          <h1>Meus Scripts Tampermonkey</h1>
+          <p class="brand-sub">Organizados por categoria, versão e changelog</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <input id="search" class="search" type="search" placeholder="Buscar scripts…" autocomplete="off" />
+        <button id="btn-new-category" class="btn btn-ghost">+ Categoria</button>
+        <button id="btn-new-script" class="btn btn-primary">+ Script</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="status" class="status" hidden></div>
+    <div id="content"></div>
+    <div id="empty" class="empty" hidden>
+      <div class="empty-emoji">📭</div>
+      <h2>Nada por aqui ainda</h2>
+      <p>Crie sua primeira categoria e adicione um script para começar.</p>
+      <button id="btn-empty-category" class="btn btn-primary">Criar categoria</button>
+    </div>
+  </main>
+
+  <!-- Modal: Categoria -->
+  <dialog id="dlg-category" class="dialog">
+    <form method="dialog" id="form-category">
+      <h3 id="dlg-category-title">Nova categoria</h3>
+      <label>Nome da categoria
+        <input name="name" required maxlength="60" placeholder="Ex: Produtividade" />
+      </label>
+      <input type="hidden" name="id" />
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Modal: Script -->
+  <dialog id="dlg-script" class="dialog">
+    <form method="dialog" id="form-script">
+      <h3 id="dlg-script-title">Novo script</h3>
+      <label>Nome
+        <input name="name" required maxlength="120" placeholder="Ex: Auto Skip YouTube Ads" />
+      </label>
+      <label>Categoria
+        <select name="categoryId" required></select>
+      </label>
+      <label>Descrição
+        <textarea name="description" rows="2" maxlength="500" placeholder="O que esse script faz?"></textarea>
+      </label>
+      <fieldset id="script-first-version">
+        <legend>Primeira versão</legend>
+        <div class="row">
+          <label class="col">Versão
+            <input name="version" placeholder="1.0.0" />
+          </label>
+        </div>
+        <label>Changelog
+          <textarea name="changelog" rows="2" placeholder="Ex: Versão inicial"></textarea>
+        </label>
+        <label>Código do script
+          <textarea name="code" rows="8" class="mono" placeholder="// ==UserScript==&#10;// ..."></textarea>
+        </label>
+      </fieldset>
+      <input type="hidden" name="id" />
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Salvar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Modal: Nova versão -->
+  <dialog id="dlg-version" class="dialog">
+    <form method="dialog" id="form-version">
+      <h3>Nova versão</h3>
+      <div class="row">
+        <label class="col">Versão
+          <input name="version" required placeholder="1.1.0" />
+        </label>
+      </div>
+      <label>Changelog — o que mudou?
+        <textarea name="changelog" rows="3" required placeholder="Ex: Corrigido bug ao carregar a página"></textarea>
+      </label>
+      <label>Código
+        <textarea name="code" rows="10" class="mono" placeholder="// código dessa versão"></textarea>
+      </label>
+      <input type="hidden" name="scriptId" />
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Adicionar versão</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Modal: Ver código -->
+  <dialog id="dlg-code" class="dialog dialog-wide">
+    <div class="dialog-head">
+      <h3 id="dlg-code-title">Código</h3>
+      <button type="button" class="btn btn-ghost" data-close>Fechar</button>
+    </div>
+    <div class="code-toolbar">
+      <span id="dlg-code-meta" class="badge"></span>
+      <button type="button" id="btn-copy-code" class="btn btn-ghost btn-sm">Copiar</button>
+    </div>
+    <pre class="code-block"><code id="dlg-code-body"></code></pre>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
