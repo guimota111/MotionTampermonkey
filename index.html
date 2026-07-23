@@ -68,6 +68,12 @@
       <label>Descrição
         <textarea name="description" rows="2" maxlength="500" placeholder="O que esse script faz?"></textarea>
       </label>
+      <fieldset id="script-campos">
+        <legend>Campos personalizáveis (opcional)</legend>
+        <p class="campos-hint">Marcadores que aparecem no código e que o usuário preenche no site antes de copiar. O texto do <strong>Marcador</strong> é substituído pelo valor digitado.</p>
+        <div id="campos-editor"></div>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-add-campo">+ Campo</button>
+      </fieldset>
       <fieldset id="script-first-version">
         <legend>Primeira versão</legend>
         <div class="row">

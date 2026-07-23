@@ -165,6 +165,7 @@ function renderScript(s) {
         <div class="script-name">${esc(s.name)}</div>
         ${s.description ? `<div class="script-desc">${esc(s.description)}</div>` : ""}
       </div>
+      ${s.fields && s.fields.length ? `<span class="chip-campos" title="Tem ${s.fields.length} campo(s) para preencher">🧩</span>` : ""}
       ${latest ? `<span class="badge">v${esc(latest.version)}</span>` : `<span class="badge" style="color:var(--text-faint);background:none;border-color:var(--border)">sem versão</span>`}
       <div class="script-head-actions">
         <button class="icon-btn" data-action="edit-script" data-script="${esc(s.id)}" title="Editar">✎</button>
@@ -182,11 +183,38 @@ function renderScriptBody(s, versions) {
 
   return `
   <div class="script-body">
+    ${renderCamposPanel(s)}
     <div class="versions-head">
       <h4>Versões & Changelog</h4>
       <button class="btn btn-ghost btn-sm" data-action="add-version" data-script="${esc(s.id)}">+ Nova versão</button>
     </div>
     ${versionsHtml}
+  </div>`;
+}
+
+// Painel onde o usuário preenche os campos antes de copiar
+function renderCamposPanel(s) {
+  if (!s.fields || !s.fields.length) return "";
+  const vals = getCampoValues(s.id);
+  const inputs = s.fields.map((f) => {
+    const val = vals[f.id] != null ? vals[f.id] : "";
+    const ph = esc(f.placeholder || "");
+    const attrs = `class="campo-control${f.type === "textarea" ? " mono" : ""}" data-script="${esc(s.id)}" data-field="${esc(f.id)}" placeholder="${ph}" autocomplete="off"`;
+    const control = f.type === "textarea"
+      ? `<textarea rows="3" ${attrs}>${esc(val)}</textarea>`
+      : `<input type="${f.type === "password" ? "password" : "text"}" value="${esc(val)}" ${attrs} />`;
+    return `
+      <label class="campo-field">
+        <span class="campo-label">${esc(f.label || f.placeholder || "Campo")}</span>
+        ${control}
+      </label>`;
+  }).join("");
+
+  return `
+  <div class="campos-panel">
+    <div class="campos-panel-head">🧩 Campos — preencha antes de copiar</div>
+    <div class="campos-grid">${inputs}</div>
+    <div class="campos-note">Os valores ficam salvos só no seu navegador. Ao <strong>Ver código</strong> ou <strong>Copiar</strong>, os marcadores são substituídos automaticamente.</div>
   </div>`;
 }
 
@@ -229,6 +257,35 @@ function findVersion(scriptId, versionId) {
   return (findScript(scriptId)?.versions || []).find((v) => v.id === versionId);
 }
 
+// --- Campos personalizáveis -------------------------------------------------
+// Os VALORES preenchidos ficam só no navegador (localStorage), nunca no Firestore.
+function camposKey(scriptId) { return `motionscripts:campos:${scriptId}`; }
+function getCampoValues(scriptId) {
+  try { return JSON.parse(localStorage.getItem(camposKey(scriptId)) || "{}"); }
+  catch { return {}; }
+}
+function setCampoValue(scriptId, fieldId, value) {
+  const all = getCampoValues(scriptId);
+  all[fieldId] = value;
+  try { localStorage.setItem(camposKey(scriptId), JSON.stringify(all)); } catch {}
+}
+// Substitui cada marcador (placeholder) pelo valor digitado
+function aplicarCampos(code, script) {
+  const vals = getCampoValues(script.id);
+  let out = code || "";
+  (script.fields || []).forEach((f) => {
+    const v = vals[f.id];
+    if (v != null && v !== "" && f.placeholder) {
+      out = out.split(f.placeholder).join(v);
+    }
+  });
+  return out;
+}
+function camposFaltando(script) {
+  const vals = getCampoValues(script.id);
+  return (script.fields || []).filter((f) => !vals[f.id] && vals[f.id] !== 0);
+}
+
 // --- Ações vinculadas dinamicamente ----------------------------------------
 function bindDynamic() {
   document.querySelectorAll("[data-action]").forEach((node) => {
@@ -237,6 +294,11 @@ function bindDynamic() {
       const { action, script, cat, version } = node.dataset;
       handleAction(action, { script, cat, version });
     };
+  });
+  // Inputs de campos: salvam no navegador conforme digita
+  document.querySelectorAll(".campo-control").forEach((node) => {
+    node.oninput = () => setCampoValue(node.dataset.script, node.dataset.field, node.value);
+    node.onclick = (e) => e.stopPropagation();
   });
 }
 
@@ -323,7 +385,43 @@ function openScriptDialog(existing = null, presetCat = null) {
   form.id.value = existing?.id || "";
   // Ao editar não mostramos o campo de primeira versão
   el("script-first-version").style.display = existing ? "none" : "block";
+  // Popular o editor de campos
+  el("campos-editor").innerHTML = "";
+  (existing?.fields || []).forEach((f) => camposEditorAddRow(f));
   dlg.showModal();
+}
+
+// Adiciona uma linha ao editor de campos do modal
+function camposEditorAddRow(field = {}) {
+  const wrap = el("campos-editor");
+  const row = document.createElement("div");
+  row.className = "campo-editor-row";
+  row.dataset.fieldId = field.id || uid();
+  row.innerHTML = `
+    <input class="ce-label" placeholder="Rótulo (ex: Endpoint)" value="${esc(field.label || "")}" />
+    <input class="ce-placeholder mono" placeholder="Marcador no código (ex: INSERIR ENDPOINT…)" value="${esc(field.placeholder || "")}" />
+    <select class="ce-type">
+      <option value="text">Texto</option>
+      <option value="password">Senha</option>
+      <option value="textarea">Multi-linha</option>
+    </select>
+    <button type="button" class="icon-btn ce-remove" title="Remover campo">🗑</button>
+  `;
+  row.querySelector(".ce-type").value = field.type || "text";
+  row.querySelector(".ce-remove").onclick = () => row.remove();
+  wrap.appendChild(row);
+}
+
+// Lê as linhas do editor e devolve o array de campos
+function coletarCampos() {
+  return [...el("campos-editor").querySelectorAll(".campo-editor-row")]
+    .map((row) => ({
+      id: row.dataset.fieldId,
+      label: row.querySelector(".ce-label").value.trim(),
+      placeholder: row.querySelector(".ce-placeholder").value,
+      type: row.querySelector(".ce-type").value
+    }))
+    .filter((f) => f.placeholder.trim() !== "");
 }
 
 el("form-script").addEventListener("submit", async (e) => {
@@ -334,7 +432,8 @@ el("form-script").addEventListener("submit", async (e) => {
   const data = {
     name,
     description: form.description.value.trim(),
-    categoryId: form.categoryId.value
+    categoryId: form.categoryId.value,
+    fields: coletarCampos()
   };
   try {
     if (id) {
@@ -427,16 +526,27 @@ function showCode(scriptId, versionId) {
   const s = findScript(scriptId);
   const v = findVersion(scriptId, versionId);
   if (!v) return;
+  const code = aplicarCampos(v.code || "", s);
+  const faltando = camposFaltando(s);
   el("dlg-code-title").textContent = s.name;
-  el("dlg-code-meta").textContent = "v" + v.version;
-  el("dlg-code-body").textContent = v.code || "";
-  el("btn-copy-code").onclick = () => copyText(v.code, "Código copiado");
+  el("dlg-code-meta").textContent = "v" + v.version +
+    (faltando.length ? `  ·  ⚠️ ${faltando.length} campo(s) não preenchido(s)` : (s.fields?.length ? "  ·  ✅ campos preenchidos" : ""));
+  el("dlg-code-body").textContent = code;
+  el("btn-copy-code").onclick = () => copyText(code, msgCopia(faltando));
   el("dlg-code").showModal();
 }
 
 function copyCode(scriptId, versionId) {
+  const s = findScript(scriptId);
   const v = findVersion(scriptId, versionId);
-  if (v) copyText(v.code, "Código copiado");
+  if (!v) return;
+  copyText(aplicarCampos(v.code || "", s), msgCopia(camposFaltando(s)));
+}
+
+function msgCopia(faltando) {
+  return faltando.length
+    ? `Copiado — ⚠️ ${faltando.length} campo(s) ainda vazio(s)`
+    : "Código copiado";
 }
 
 async function copyText(text, msg) {
@@ -459,6 +569,7 @@ async function copyText(text, msg) {
 el("btn-new-category").onclick = () => openCategoryDialog();
 el("btn-empty-category").onclick = () => openCategoryDialog();
 el("btn-new-script").onclick = () => openScriptDialog();
+el("btn-add-campo").onclick = () => camposEditorAddRow();
 el("search").addEventListener("input", (e) => { searchTerm = e.target.value; render(); });
 
 // botões "Cancelar"/"Fechar" dentro dos dialogs
