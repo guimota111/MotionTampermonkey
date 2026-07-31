@@ -30,6 +30,27 @@
   </header>
 
   <main class="container">
+    <div class="dashboard-hero">
+      <div class="hero-info">
+        <h2>Hub de Scripts Tampermonkey</h2>
+        <p>Gerencie seus scripts com suporte a campos personalizáveis, controle de versões e instalação rápida.</p>
+      </div>
+      <div class="hero-stats">
+        <div class="stat-card">
+          <span class="stat-value" id="stat-scripts-count">0</span>
+          <span class="stat-label">Scripts</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-categories-count">0</span>
+          <span class="stat-label">Categorias</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value" id="stat-status-badge">🟢</span>
+          <span class="stat-label">Firestore Conectado</span>
+        </div>
+      </div>
+    </div>
+
     <div id="status" class="status" hidden></div>
     <div id="content"></div>
     <div id="empty" class="empty" hidden>

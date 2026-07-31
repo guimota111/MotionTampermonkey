@@ -104,6 +104,11 @@ function render() {
   const empty = el("empty");
   const term = searchTerm.trim().toLowerCase();
 
+  const statScripts = el("stat-scripts-count");
+  const statCategories = el("stat-categories-count");
+  if (statScripts) statScripts.textContent = scripts.length;
+  if (statCategories) statCategories.textContent = categories.length;
+
   if (categories.length === 0 && scripts.length === 0) {
     content.innerHTML = "";
     empty.hidden = false;
