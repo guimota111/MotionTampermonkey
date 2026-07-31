@@ -228,6 +228,7 @@ function renderVersion(s, v, isLatest) {
     </div>
     ${v.changelog ? `<div class="version-changelog">${esc(v.changelog)}</div>` : ""}
     <div class="version-actions">
+      ${v.code ? `<button class="btn btn-primary btn-sm" data-action="install-version" data-script="${esc(s.id)}" data-version="${esc(v.id)}" title="Instalar no Tampermonkey com os campos preenchidos">⚡ Instalar</button>` : ""}
       ${v.code ? `<button class="btn btn-ghost btn-sm" data-action="view-code" data-script="${esc(s.id)}" data-version="${esc(v.id)}">Ver código</button>` : ""}
       ${v.code ? `<button class="btn btn-ghost btn-sm" data-action="copy-version" data-script="${esc(s.id)}" data-version="${esc(v.id)}">Copiar</button>` : ""}
       <button class="btn btn-danger btn-sm" data-action="del-version" data-script="${esc(s.id)}" data-version="${esc(v.id)}">Excluir versão</button>
@@ -315,6 +316,7 @@ async function handleAction(action, { script, cat, version }) {
     case "del-script": await deleteScript(script); break;
     case "add-version": openVersionDialog(script); break;
     case "del-version": await deleteVersion(script, version); break;
+    case "install-version": installCode(script, version); break;
     case "view-code": showCode(script, version); break;
     case "copy-version": copyCode(script, version); break;
   }
@@ -521,7 +523,50 @@ async function deleteVersion(scriptId, versionId) {
   } catch (err) { toast("Erro: " + err.message); }
 }
 
-// --- Ver / copiar código ---------------------------------------------------
+// --- Ver / copiar / instalar código -----------------------------------------
+function installCode(scriptId, versionId) {
+  const s = findScript(scriptId);
+  const v = findVersion(scriptId, versionId);
+  if (!v || !v.code) return;
+
+  // Substitui os campos personalizáveis pelos valores preenchidos pelo usuário no painel
+  const processedCode = aplicarCampos(v.code, s);
+  const faltando = camposFaltando(s);
+
+  // Criar Blob com MIME type do Tampermonkey
+  const blob = new Blob([processedCode], { type: "application/x-userscript;charset=utf-8" });
+  const blobUrl = URL.createObjectURL(blob);
+
+  const safeName = (s.name || "script").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const fileName = `${safeName}-v${v.version}.user.js`;
+
+  // 1. Tenta abrir a URL em nova aba (o Tampermonkey abre a tela de instalação se a extensão estiver ativa)
+  try {
+    window.open(blobUrl, "_blank");
+  } catch (e) {
+    console.log("window.open skipped", e);
+  }
+
+  // 2. Dispara o download do arquivo .user.js como garantia
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = fileName;
+  a.target = "_blank";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+
+  if (faltando.length) {
+    toast(`⚡ Enviando ao Tampermonkey — ⚠️ ${faltando.length} campo(s) sem preencher`);
+  } else if (s.fields && s.fields.length) {
+    toast("⚡ Instalando no Tampermonkey com seus campos preenchidos!");
+  } else {
+    toast("⚡ Instalando no Tampermonkey!");
+  }
+}
+
 function showCode(scriptId, versionId) {
   const s = findScript(scriptId);
   const v = findVersion(scriptId, versionId);
@@ -532,6 +577,7 @@ function showCode(scriptId, versionId) {
   el("dlg-code-meta").textContent = "v" + v.version +
     (faltando.length ? `  ·  ⚠️ ${faltando.length} campo(s) não preenchido(s)` : (s.fields?.length ? "  ·  ✅ campos preenchidos" : ""));
   el("dlg-code-body").textContent = code;
+  el("btn-install-code").onclick = () => installCode(scriptId, versionId);
   el("btn-copy-code").onclick = () => copyText(code, msgCopia(faltando));
   el("dlg-code").showModal();
 }
