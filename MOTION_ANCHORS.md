@@ -76,7 +76,59 @@ Usado por scripts como **Buscador Rápido de Casos**.
 
 ---
 
-## 5. 🔬 Domínios da Telepatologia (`Telepato`)
+## 5. 📊 Monitor de Pendências (`https://motionap.dasa.com.br/velab-monitores/MonitorPendencias.action`)
+
+Usado pelo script **Motion · Extrator de Casos**.
+
+### 🎯 Elementos de Ancoragem (DOM)
+
+A grade não tem `<th>` com títulos (o cabeçalho fica fora da tabela), então a
+ancoragem é feita pelo atributo do seletor de linha, não por índice de coluna.
+
+| Função | Seletor CSS / RegEx | Descrição / Observações |
+|---|---|---|
+| **Linha de caso** | `[data-pendencia]` → `.closest('tr')` | O valor é o ID interno da pendência. Aparece em `td` nas linhas de dados. |
+| **Linha a descartar** | `tr.header` | Linha oculta que **também** tem `data-pendencia` (em `th`) e texto vazio. Filtrar por texto vazio. |
+| **Prazo (timer)** | `.listaTimer` | Tempo restante, formato `2d04h` / `14h30m`. Atualizado por JS. |
+| **FAP** | célula com `/^\d{12}$/` | É o número de 12 dígitos — a mesma chave usada pelo Organizador de Casos. |
+| **Nome + código** | última célula de texto | Nome e código interno (`CL-26-1495`) ficam grudados; separar por `/([A-Z]{2,4}-\d{2}-\d+)\s*$/`. |
+| **Tipo de pendência** | `td.preventRowSelection span` | Só existe como tooltip dos ícones: `Preparo Pendente: Liberação Médica`, `Preparo Pendente: Digitalização`, `Pedidos Medicos Escaneados`, `Imagens da requisição`, `Consultar Requisição`, `Acompanhamento de Processos de Amostras`. |
+
+### 🚩 Flags de estado (classes de ícone)
+
+| Flag | Classe |
+|---|---|
+| Urgente | `tcolor-urgent` |
+| Alerta | `ticon-alerta` |
+| Bloqueado | `ticon-cadeado-fechado` / `tcolor-locked` |
+| Tem imagens | `ticon-arquivo-imagem` |
+| Pedido escaneado | `ticon-prancheta-lista` |
+
+### ⚠️ Armadilhas desta página
+
+1. **A página carrega o Prototype.js**, que substitui `Array.prototype.filter`
+   por uma versão que chama o callback só com `(valor, índice)`. Qualquer
+   callback que use o 3º argumento (o array) recebe `undefined` e lança
+   `TypeError`. Use laços explícitos ou `Set` para deduplicar.
+2. **Não use `MutationObserver` sobre o `body` para manter um botão.** Criar ou
+   atualizar o próprio botão dispara o observador, que reage e altera de novo —
+   laço infinito que trava a aba. Uma sondagem (`setInterval`) idempotente
+   resolve sem risco.
+3. **A grade nasce vazia**: os casos só aparecem depois de aplicar o filtro, e
+   a lista se recarrega sozinha a cada 60s (`filtroBusca.intervaloAtualizacao`).
+4. `filtroBusca.itensPorPagina` vale 30 por padrão; acima disso há paginação.
+
+### 💻 Detecção da tela
+
+```javascript
+function temCasosNoMonitor() {
+    return document.querySelector('[data-pendencia]') !== null;
+}
+```
+
+---
+
+## 6. 🔬 Domínios da Telepatologia (`Telepato`)
 
 Usado pelo script **Telepato · Contador (Patologia)**.
 
