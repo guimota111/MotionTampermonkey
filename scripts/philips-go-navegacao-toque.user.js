@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Philips GO · Navegação por Toque
 // @namespace    https://github.com/guimota111/MotionTampermonkey
-// @version      1.0.0
-// @description  Habilita navegação por toque no visualizador de lâminas do Philips (Telepatologia Dasa): 1 dedo arrasta, pinça dá zoom, toque duplo aproxima. Traduz o toque em eventos de mouse/ponteiro que o visualizador entende.
+// @version      1.1.0
+// @description  Habilita navegação por toque no visualizador de lâminas do Philips PathologySuite (Telepatologia Dasa): 1 dedo arrasta, pinça dá zoom, toque duplo aproxima. Traduz o toque em eventos de mouse/ponteiro que o visualizador entende.
 // @author       guimota111
 // @match        https://patologia-go01.dasa.com.br/*
 // @match        https://patologia-rj01.dasa.com.br/*
@@ -27,10 +27,14 @@
     emitirPonteiro: true,     // dispara pointerdown/pointermove/pointerup (pointerType: mouse)
     zoomComCtrl: false,       // usa Ctrl+roda em vez de roda pura
     inverterZoom: false,
-    sensibilidadeZoom: 1,     // multiplicador da pinça
-    passoRoda: 100,           // deltaY de cada "clique" de roda sintético
+    sensibilidadeZoom: 1,     // quantos passos de roda a pinça gera
+    autoPasso: true,          // usa o deltaY nativo medido na própria página
+    passoRoda: 4,             // deltaY de cada passo quando autoPasso está desligado
+    passoNativo: 0,           // mediana do |deltaY| observado em rodas reais (calibração)
+    deltaModeNativo: 0,
     panDoisDedos: false,      // arrastar com dois dedos também move (além do zoom)
     toqueDuplo: 'zoom',       // 'zoom' | 'dblclick' | 'off'
+    qualquerCanvas: true,     // trata qualquer canvas do visualizador (inclui janela de navegação)
     seletor: '',              // força o elemento do visualizador (CSS selector)
     debug: false
   };
@@ -48,12 +52,20 @@
   }
 
   // =========================================================================
-  //  Descoberta do elemento do visualizador
+  //  Descoberta do visualizador
   // =========================================================================
-  const AREA_MINIMA = 200; // px de lado mínimo pra considerar um canvas como visualizador
+  // O PathologySuite empilha várias camadas de canvas do mesmo tamanho: o
+  // render WebGL embaixo e os overlays do Fabric (anotação, grade, pan) por
+  // cima. Quem recebe os eventos é a camada de cima, que fica numa subárvore
+  // diferente da do canvas WebGL — por isso a área de toque não pode ser o pai
+  // do canvas, e sim o contêiner que abriga todas as camadas.
+  const LADO_MINIMO = 200;     // lado mínimo pra um canvas ser "o visualizador"
+  const LADO_MINIMO_AUX = 80;  // lado mínimo pra um canvas auxiliar (janela de navegação)
+  const FOLGA_RAIZ = 2;        // a raiz pode ter até 2× a área do canvas
+
   let visualizador = null;
   let visualizadorEm = 0;
-  let raizMarcada = null;
+  let raizAtual = null;
 
   function acharVisualizador() {
     if (cfg.seletor) {
@@ -64,17 +76,36 @@
     let maiorArea = 0;
     for (const c of document.querySelectorAll('canvas')) {
       const r = c.getBoundingClientRect();
-      if (r.width < AREA_MINIMA || r.height < AREA_MINIMA) continue;
+      if (r.width < LADO_MINIMO || r.height < LADO_MINIMO) continue;
       const area = r.width * r.height;
       if (area > maiorArea) { maiorArea = area; melhor = c; }
     }
     return melhor;
   }
 
+  // Sobe a partir do canvas enquanto os ancestrais mantiverem praticamente a
+  // mesma área — assim chegamos ao contêiner do viewport (que também contém os
+  // overlays) sem estourar pra página inteira.
+  function acharRaiz(canvas) {
+    const rc = canvas.getBoundingClientRect();
+    const areaCanvas = Math.max(1, rc.width * rc.height);
+    let melhor = canvas;
+    let n = canvas.parentElement;
+    let i = 0;
+    while (n && n !== document.body && n !== document.documentElement && i < 10) {
+      const r = n.getBoundingClientRect();
+      if (r.width * r.height > areaCanvas * FOLGA_RAIZ) break;
+      melhor = n;
+      n = n.parentElement;
+      i++;
+    }
+    return melhor;
+  }
+
   function desmarcar() {
     if (visualizador) visualizador.classList.remove('pgt-alvo');
-    if (raizMarcada) raizMarcada.classList.remove('pgt-alvo');
-    raizMarcada = null;
+    if (raizAtual) raizAtual.classList.remove('pgt-alvo');
+    raizAtual = null;
   }
 
   function getVisualizador() {
@@ -86,12 +117,9 @@
         visualizador = novo;
         if (visualizador) {
           visualizador.classList.add('pgt-alvo');
-          const pai = visualizador.parentElement;
-          if (pai && pai !== document.body && pai !== document.documentElement) {
-            pai.classList.add('pgt-alvo');
-            raizMarcada = pai;
-          }
-          log('visualizador detectado:', visualizador);
+          raizAtual = acharRaiz(visualizador);
+          if (raizAtual !== visualizador) raizAtual.classList.add('pgt-alvo');
+          log('visualizador:', visualizador, 'raiz:', raizAtual);
         }
         atualizarStatus();
       }
@@ -100,27 +128,50 @@
     return visualizador;
   }
 
-  // A raiz é o contêiner do canvas (o visualizador costuma sobrepor divs
-  // transparentes ao canvas). Se o pai for <body>/<html>, ficaríamos com a
-  // página inteira como área de toque — nesse caso usamos o próprio canvas.
-  function raiz() {
-    const v = getVisualizador();
-    if (!v) return null;
-    const pai = v.parentElement;
-    if (!pai || pai === document.body || pai === document.documentElement) return v;
-    return pai;
-  }
-
   const IGNORAR = 'button, a, input, select, textarea, label, [role="button"], [role="slider"], .pgt-widget';
 
   function deveTratar(alvo) {
     if (!cfg.ativo || !alvo || alvo.nodeType !== 1) return false;
     if (alvo.closest && alvo.closest(IGNORAR)) return false;
+
     const v = getVisualizador();
+    if (!v) return false;
     if (alvo === v) return true;
-    const r = raiz();
-    if (!r) return false;
-    return alvo === r || r.contains(alvo);
+    if (raizAtual && (alvo === raizAtual || raizAtual.contains(alvo))) return true;
+
+    // Rede de segurança: as camadas de overlay podem morar fora da raiz
+    // detectada. Neste domínio todo canvas pertence ao visualizador.
+    if (cfg.qualquerCanvas && alvo.tagName === 'CANVAS') {
+      const r = alvo.getBoundingClientRect();
+      if (r.width >= LADO_MINIMO_AUX && r.height >= LADO_MINIMO_AUX) return true;
+    }
+    return false;
+  }
+
+  // =========================================================================
+  //  Calibração da roda
+  // =========================================================================
+  // O deltaY nativo varia muito por dispositivo (neste visualizador, uma rolagem
+  // real chega com deltaY = 2, não com os 100 de um mouse clássico). Em vez de
+  // chutar, medimos o valor real da própria página e usamos a mediana.
+  const amostrasRoda = [];
+
+  function aoRodaReal(e) {
+    if (e.__pgt || !e.isTrusted) return;
+    const d = Math.abs(e.deltaY);
+    if (!d) return;
+    amostrasRoda.push(d);
+    if (amostrasRoda.length > 21) amostrasRoda.shift();
+    const ord = amostrasRoda.slice().sort((a, b) => a - b);
+    cfg.passoNativo = ord[Math.floor(ord.length / 2)];
+    cfg.deltaModeNativo = e.deltaMode;
+    salvar();
+    atualizarStatus();
+  }
+
+  function passoEfetivo() {
+    if (cfg.autoPasso && cfg.passoNativo > 0) return cfg.passoNativo;
+    return cfg.passoRoda;
   }
 
   // =========================================================================
@@ -180,6 +231,13 @@
   }
 
   // Ordem igual à do navegador real: pointer* antes de mouse*.
+  function pairar(alvo, x, y) {
+    // Move o "cursor" até o ponto ANTES de pressionar. Visualizadores que
+    // calculam o deslocamento a partir da última posição conhecida dariam um
+    // pulo enorme sem isto.
+    dispararPonteiro('pointermove', alvo, x, y, { buttons: 0 });
+    dispararMouse('mousemove', alvo, x, y, { buttons: 0 });
+  }
   function pressionar(alvo, x, y) {
     dispararPonteiro('pointerdown', alvo, x, y, { buttons: 1 });
     dispararMouse('mousedown', alvo, x, y, { buttons: 1 });
@@ -205,7 +263,7 @@
       deltaX: 0,
       deltaY: deltaY,
       deltaZ: 0,
-      deltaMode: 0,
+      deltaMode: cfg.deltaModeNativo || 0,
       ctrlKey: cfg.zoomComCtrl
     }));
     ev.__pgt = true;
@@ -215,8 +273,8 @@
   // passos > 0 aproxima (zoom in); < 0 afasta
   function zoom(x, y, passos) {
     const sinal = cfg.inverterZoom ? 1 : -1; // convenção: deltaY negativo = aproximar
-    roda(x, y, sinal * passos * cfg.passoRoda);
-    log('zoom', passos > 0 ? 'in' : 'out', 'em', Math.round(x), Math.round(y));
+    roda(x, y, sinal * passos * passoEfetivo());
+    log('zoom', passos > 0 ? 'in' : 'out', 'passo', passoEfetivo());
   }
 
   // =========================================================================
@@ -247,8 +305,9 @@
     inicio = { x: toque.clientX, y: toque.clientY, t: Date.now() };
     moveu = false;
     modo = 'arrasto';
+    pairar(alvoArrasto, ultimo.x, ultimo.y);
     pressionar(alvoArrasto, ultimo.x, ultimo.y);
-    log('arrasto iniciado');
+    log('arrasto iniciado em', alvoArrasto);
   }
 
   function moverArrasto(x, y) {
@@ -302,6 +361,7 @@
       const my = (a.clientY + b.clientY) / 2;
       alvoArrasto = document.elementFromPoint(mx, my) || getVisualizador();
       ultimo = { x: mx, y: my };
+      pairar(alvoArrasto, mx, my);
       pressionar(alvoArrasto, mx, my);
       pincaArrastando = true;
     }
@@ -327,6 +387,11 @@
     if (!distPinca) { distPinca = d; return; }
     acumZoom += Math.log2(d / distPinca) * cfg.sensibilidadeZoom;
     distPinca = d;
+
+    if (Math.abs(acumZoom) < LIMIAR_ZOOM) return;
+
+    // o zoom costuma ser ancorado no cursor: leva o "cursor" ao ponto médio antes
+    if (!pincaArrastando) pairar(document.elementFromPoint(mx, my) || getVisualizador(), mx, my);
 
     let guarda = 0;
     while (Math.abs(acumZoom) >= LIMIAR_ZOOM && guarda++ < 8) {
@@ -409,7 +474,7 @@
     }
   }
 
-  function aoCancelar(e) {
+  function aoCancelar() {
     if (modo === 'arrasto') encerrarArrasto(false);
     else if (modo === 'pinca') encerrarPinca(ultimo.x, ultimo.y);
     modo = 'ocioso';
@@ -426,6 +491,7 @@
   document.addEventListener('touchend', aoSoltar, opts);
   document.addEventListener('touchcancel', aoCancelar, opts);
   document.addEventListener('contextmenu', aoMenuContexto, opts);
+  document.addEventListener('wheel', aoRodaReal, { capture: true, passive: true });
 
   // =========================================================================
   //  Estilos: impede o navegador de "roubar" o gesto (scroll/zoom da página)
@@ -452,7 +518,7 @@
     #pgt-btn.off { background: #475569; opacity: .6; }
     #pgt-painel {
       position: fixed; bottom: 76px; left: 20px; z-index: 2147483646;
-      width: 268px; max-height: 78vh; overflow-y: auto;
+      width: 274px; max-height: 78vh; overflow-y: auto;
       background: #0f172a; color: #e2e8f0; border: 1px solid #1e293b; border-radius: 12px;
       padding: 14px; font-size: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.45);
     }
@@ -460,7 +526,7 @@
     #pgt-painel h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: #f8fafc; }
     #pgt-painel .linha { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 7px 0; }
     #pgt-painel label { color: #cbd5e1; flex: 1; }
-    #pgt-painel input[type="range"] { width: 108px; }
+    #pgt-painel input[type="range"] { width: 104px; }
     #pgt-painel input[type="text"] { width: 100%; background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 5px 7px; font-size: 11px; }
     #pgt-painel select { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 3px 5px; font-size: 11px; }
     #pgt-painel hr { border: none; border-top: 1px solid #1e293b; margin: 11px 0; }
@@ -479,12 +545,25 @@
   function atualizarStatus() {
     if (!elStatus) return;
     const v = getVisualizador();
-    if (!v) { elStatus.textContent = 'Nenhum visualizador detectado. Abra uma lâmina — ou informe um seletor abaixo.'; return; }
+    if (!v) {
+      elStatus.textContent = 'Nenhum visualizador detectado. Abra uma lâmina — ou informe um seletor abaixo.';
+      return;
+    }
     const r = v.getBoundingClientRect();
-    const id = v.id ? '#' + v.id : '';
-    const cls = (v.className && typeof v.className === 'string')
-      ? '.' + v.className.trim().split(/\s+/).filter((c) => c !== 'pgt-alvo').slice(0, 2).join('.') : '';
-    elStatus.textContent = `Detectado: ${v.tagName.toLowerCase()}${id}${cls} — ${Math.round(r.width)}×${Math.round(r.height)}px`;
+    const nome = (el) => {
+      const id = el.id ? '#' + el.id : '';
+      const cls = (el.className && typeof el.className === 'string')
+        ? '.' + el.className.trim().split(/\s+/).filter((c) => c !== 'pgt-alvo').slice(0, 2).join('.') : '';
+      return el.tagName.toLowerCase() + id + cls;
+    };
+    const passo = cfg.autoPasso && cfg.passoNativo
+      ? `${cfg.passoNativo} (medido)`
+      : `${cfg.passoRoda} (manual)`;
+    elStatus.textContent =
+      `Canvas: ${nome(v)} — ${Math.round(r.width)}×${Math.round(r.height)}px\n` +
+      `Área de toque: ${raizAtual && raizAtual !== v ? nome(raizAtual) : '(o próprio canvas)'}\n` +
+      `Passo da roda: ${passo}`;
+    elStatus.style.whiteSpace = 'pre-line';
   }
 
   function checkbox(rotulo, chave, aoMudar) {
@@ -500,7 +579,7 @@
     return linha;
   }
 
-  function slider(rotulo, chave, min, max, passo, formatar) {
+  function slider(rotulo, chave, min, max, passo, formatar, aoMudar) {
     const linha = document.createElement('div');
     linha.className = 'linha';
     const lab = document.createElement('label');
@@ -512,7 +591,11 @@
     inp.min = min; inp.max = max; inp.step = passo;
     inp.value = cfg[chave];
     const pinta = () => { val.textContent = formatar ? formatar(cfg[chave]) : cfg[chave]; };
-    inp.addEventListener('input', () => { cfg[chave] = parseFloat(inp.value); pinta(); salvar(); });
+    inp.addEventListener('input', () => {
+      cfg[chave] = parseFloat(inp.value);
+      pinta(); salvar();
+      if (aoMudar) aoMudar();
+    });
     pinta();
     linha.append(lab, inp, val);
     return linha;
@@ -529,9 +612,6 @@
 
     elStatus = document.createElement('div');
     elStatus.className = 'status';
-
-    const sep1 = document.createElement('hr');
-    const sep2 = document.createElement('hr');
 
     // toque duplo
     const linhaTD = document.createElement('div');
@@ -554,36 +634,37 @@
     labSel.style.margin = '8px 0 4px';
     const inpSel = document.createElement('input');
     inpSel.type = 'text';
-    inpSel.placeholder = 'ex.: canvas.slide-canvas';
+    inpSel.placeholder = 'ex.: canvas.webgl';
     inpSel.value = cfg.seletor;
     inpSel.addEventListener('change', () => {
       cfg.seletor = inpSel.value.trim();
       salvar();
-      visualizador = null; visualizadorEm = 0;
-      getVisualizador();
-      atualizarStatus();
+      redetectar();
     });
 
     const dica = document.createElement('div');
     dica.className = 'dica';
     dica.innerHTML = '1 dedo arrasta · 2 dedos dão zoom · toque duplo aproxima · 2 dedos batidos afastam.<br>' +
-      'Se o arrasto ficar com o dobro da velocidade, desligue "Eventos de ponteiro".<br>' +
-      'Se a pinça não der zoom, tente ligar "Zoom com Ctrl+roda" ou "Inverter zoom".';
+      'O passo da roda é medido a partir de uma rolagem real na própria página — role uma vez com o mouse/trackpad para calibrar.<br>' +
+      'Zoom fraco ou forte demais? Desligue "Passo automático" e ajuste no braço.<br>' +
+      'Arrasto com o dobro da velocidade? Desligue "Eventos de ponteiro".';
 
     painel.append(
       titulo,
       elStatus,
-      sep1,
+      document.createElement('hr'),
       checkbox('Ativo', 'ativo', aplicarAtivo),
       slider('Sensibilidade do zoom', 'sensibilidadeZoom', 0.3, 3, 0.1, (v) => v.toFixed(1) + '×'),
-      slider('Passo da roda', 'passoRoda', 20, 300, 10),
+      checkbox('Passo automático', 'autoPasso', atualizarStatus),
+      slider('Passo da roda', 'passoRoda', 1, 300, 1, null, atualizarStatus),
       checkbox('Inverter zoom', 'inverterZoom'),
       checkbox('Zoom com Ctrl+roda', 'zoomComCtrl'),
       linhaTD,
       checkbox('Pan com dois dedos', 'panDoisDedos'),
-      sep2,
+      document.createElement('hr'),
       checkbox('Eventos de mouse', 'emitirMouse'),
       checkbox('Eventos de ponteiro', 'emitirPonteiro'),
+      checkbox('Tratar qualquer canvas', 'qualquerCanvas'),
       checkbox('Log no console', 'debug'),
       labSel,
       inpSel,
@@ -592,11 +673,18 @@
     document.body.appendChild(painel);
   }
 
+  function redetectar() {
+    desmarcar();
+    visualizador = null;
+    visualizadorEm = 0;
+    getVisualizador();
+    atualizarStatus();
+  }
+
   function aplicarAtivo() {
     if (botao) botao.classList.toggle('off', !cfg.ativo);
     if (!cfg.ativo) { desmarcar(); return; }
-    visualizador = null; visualizadorEm = 0;
-    getVisualizador();
+    redetectar();
   }
 
   function montarBotao() {
@@ -619,8 +707,8 @@
   //  Inicialização
   // =========================================================================
   // O visualizador pode estar dentro de um iframe. O script roda em todos os
-  // frames, mas o botão só aparece no frame que realmente tem a lâmina — assim
-  // não fica um botão duplicado por cima do outro.
+  // frames, mas o botão flutuante só aparece no frame que realmente tem a
+  // lâmina — assim não fica um botão duplicado por cima do outro.
   const ehTopo = window.top === window;
   let tentativas = 0;
 
@@ -634,7 +722,7 @@
   function iniciar() {
     if (!document.body || !document.head) { setTimeout(iniciar, 300); return; }
     if (!document.head.contains(estilo)) document.head.appendChild(estilo);
-    // o visualizador costuma aparecer só depois que a lâmina carrega
+    // o canvas só existe depois que a lâmina carrega
     setInterval(() => { tentativas++; getVisualizador(); talvezMostrarBotao(); }, 1200);
     talvezMostrarBotao();
     log('pronto (frame ' + (ehTopo ? 'topo' : 'interno') + ')');

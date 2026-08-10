@@ -145,20 +145,55 @@ Usado pelo script **Telepato · Contador (Patologia)**.
 
 ---
 
-## 7. 👆 Visualizador de Lâminas Philips (GO / Telepatologia)
+## 7. 👆 Visualizador de Lâminas Philips PathologySuite (GO / Telepatologia)
 
 Usado pelo script **Philips GO · Navegação por Toque**
 (`scripts/philips-go-navegacao-toque.user.js`). Mesmos domínios da seção 6.
 
+**URL do visualizador**: `https://patologia-{uf}{nn}.dasa.com.br/pathologysuite/#/viewer?images=<UID>&server=<host>`
+App **Angular** (`[ng-version]`), render em **WebGL**, overlays em **Fabric.js**.
+Sem OpenSeadragon, sem Hammer.js.
+
+### 🧅 Camadas de canvas (todas do mesmo tamanho, empilhadas)
+
+Confirmado por diagnóstico em produção — 8 canvas na tela:
+
+| Camada | Seletor | Papel |
+|---|---|---|
+| Render da lâmina | `app-viewport-renderer.viewport-renderer-layer.e2e-mouse-element ... canvas.webgl` | Canvas WebGL, com `id` **UUID gerado a cada sessão** — não serve de âncora. |
+| Grade | `app-fabric-grid.fabric-grid > canvas.grid-canvas.lower-canvas` | Fabric. |
+| Ferramenta de pan | `app-fabric-pan.fabric-canvas.pan-tool > canvas.pan-view-canvas.lower-canvas` | Fabric. |
+| Anotação (fundo) | `app-fabric-annotation ... canvas.annotation-canvas.lower-canvas` | Fabric. |
+| **Anotação (topo)** | `app-fabric-annotation ... canvas.upper-canvas.annotation-canvas` | **É esta que recebe todos os eventos** (`touchstart`, `pointerdown`, `mousedown`, `wheel`). Já nasce com `touch-action: none`. |
+| Janela de navegação | `app-renderer-navigation-window > canvas.layer.e2e-navigation-window-slide` + `app-crosshair` (2 canvas) | Miniatura, ~304×105px. |
+
+> ⚠️ O `canvas.upper-canvas` fica numa **subárvore diferente** da do
+> `canvas.webgl`: `div.viewer-container` tem como filhos tanto o
+> `app-viewport-renderer` quanto o `app-annotation-overlay`. Ancorar no
+> `canvas.webgl.parentElement` **não** alcança a camada que recebe os eventos.
+
+### 🎧 Onde o app escuta (via `getEventListeners`)
+
+| Alvo | Eventos |
+|---|---|
+| `document` | `mousedown, mousemove, mouseup, mouseenter, pointerdown, pointermove, wheel, DOMMouseScroll, mousewheel, touchstart, touchmove` |
+| 3º ancestral do `canvas.webgl` | `mousedown, wheel` |
+
+O pan/zoom é dirigido por **mouse/pointer no `document`** — por isso eventos
+sintéticos disparados em qualquer elemento da área do visualizador chegam ao
+app por bubbling. Os `touchstart`/`touchmove` no `document` são do Fabric, não
+da navegação.
+
 ### 🎯 Ancoragem do visualizador
 
-Não há um `id`/classe estável para o visualizador, então a ancoragem é
-**geométrica**: o maior `<canvas>` da página com pelo menos `200×200 px`.
+O `id` do canvas é um UUID por sessão, então a ancoragem é **geométrica**: o
+maior `<canvas>` da página com pelo menos `200×200 px`.
 
 | Função | Seletor / Heurística | Observações |
 |---|---|---|
 | **Canvas da lâmina** | maior `canvas` com lado ≥ 200px | Marcado com a classe `.pgt-alvo`. Pode ser sobrescrito por um seletor manual no painel. |
-| **Raiz da área de toque** | `canvas.parentElement` | O visualizador sobrepõe `div`s transparentes ao canvas; se o pai for `body`/`html`, usa-se o próprio canvas. |
+| **Raiz da área de toque** | sobe do canvas enquanto o ancestral tiver ≤ 2× a área dele (máx. 10 níveis, parando antes de `body`) | Chega ao contêiner do viewport, que abriga **todas** as camadas — inclusive o overlay do Fabric. |
+| **Rede de segurança** | qualquer `canvas` com lado ≥ 80px | Neste domínio todo canvas pertence ao visualizador; cobre também a janela de navegação. |
 | **Elementos a ignorar** | `button, a, input, select, textarea, label, [role="button"], [role="slider"], .pgt-widget` | Toques nesses elementos seguem o fluxo nativo, sem interceptação. |
 
 ### 🎨 Elementos do widget de toque
@@ -169,22 +204,34 @@ Não há um `id`/classe estável para o visualizador, então a ancoragem é
 
 ### ⚠️ Armadilhas desta tela
 
-1. **O visualizador ignora eventos de toque.** Ele escuta `mouse*` e/ou
-   `pointer*` — neste último caso filtrando `pointerType === 'mouse'`. Por isso
-   o script **traduz** o toque em eventos sintéticos de mouse **e** de ponteiro
-   (nessa ordem, como o navegador real faz), em vez de tentar tratar o toque.
-2. **`setPointerCapture()` com `pointerId` sintético lança `InvalidPointerId`**
+1. **O Fabric mata o toque.** O `canvas.upper-canvas` dá `preventDefault()` no
+   `touchstart`, então o navegador **não gera os eventos de mouse de
+   compatibilidade** — e o pan do app, que depende de `mousedown`/`mousemove`,
+   nunca dispara com o dedo. Daí o script **traduzir** o toque em eventos
+   sintéticos de mouse **e** de ponteiro (nessa ordem, como o navegador real
+   faz), em vez de tentar tratar o toque.
+2. **O `pointerdown` de toque chega ao app** (`pointerType: "touch"`) e mesmo
+   assim não navega — confirmando que a navegação é dirigida por mouse. Os
+   eventos sintéticos usam `pointerType: 'mouse'`.
+3. **`setPointerCapture()` com `pointerId` sintético lança `InvalidPointerId`**
    e quebraria o handler do visualizador. `Element.prototype.setPointerCapture`
    e `releasePointerCapture` são envolvidos em `try/catch` para engolir o erro.
-3. **O zoom é feito por `wheel`**, não por API própria: a pinça vira passos
-   discretos de roda (`deltaY = ±100`, `deltaMode: 0`) disparados no ponto médio
-   entre os dedos. `deltaY` negativo = aproximar.
-4. **`touch-action: none` é obrigatório** no canvas e no contêiner, senão o
+4. **O `deltaY` nativo aqui é 2, não 100.** Uma rolagem real nesta tela chega
+   com `deltaY: 2` / `deltaMode: 0`. Emitir os 100 de um mouse clássico jogaria
+   o zoom pro fim da escala numa pinçada só. O script **calibra**: mede o
+   `|deltaY|` de rolagens reais (`isTrusted`) e usa a mediana como passo.
+5. **É preciso "mover o cursor" antes de pressionar.** Um `mousemove`/
+   `pointermove` com `buttons: 0` no ponto do toque precede o `mousedown` — sem
+   isso, um app que calcula o deslocamento a partir da última posição conhecida
+   dá um salto na primeira movimentação. O mesmo vale antes do `wheel`, porque o
+   zoom é ancorado no cursor.
+6. **`touch-action: none` é obrigatório** no canvas e no contêiner, senão o
    navegador rouba o gesto para rolar/dar zoom na página.
-5. **A lâmina pode estar dentro de um `iframe`**: o script roda em todos os
+7. **A lâmina pode estar dentro de um `iframe`**: o script roda em todos os
    frames, mas o botão flutuante só é criado no frame que realmente tem o
-   canvas — evita botão duplicado sobreposto.
-6. **O canvas só existe depois que a lâmina carrega**: a detecção é feita por
+   canvas — evita botão duplicado sobreposto. (No PathologySuite atual não há
+   iframe: `window.top === window`.)
+8. **O canvas só existe depois que a lâmina carrega**: a detecção é feita por
    sondagem (`setInterval` de 1,2s), não por `MutationObserver` (ver armadilha 2
    da seção 5).
 
