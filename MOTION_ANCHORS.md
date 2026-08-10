@@ -142,3 +142,70 @@ Usado pelo script **Telepato · Contador (Patologia)**.
 - **Botão Flutuante**: `#tp-opcoes-btn` (fixado em `bottom: 20px; right: 20px; z-index: 2147483646`).
 - **Container do Widget**: `#tp-widget-container` (`bottom: 72px; right: 20px;`).
 - **Classes de Escopo**: `.tp-widget` para isolar CSS.
+
+---
+
+## 7. 👆 Visualizador de Lâminas Philips (GO / Telepatologia)
+
+Usado pelo script **Philips GO · Navegação por Toque**
+(`scripts/philips-go-navegacao-toque.user.js`). Mesmos domínios da seção 6.
+
+### 🎯 Ancoragem do visualizador
+
+Não há um `id`/classe estável para o visualizador, então a ancoragem é
+**geométrica**: o maior `<canvas>` da página com pelo menos `200×200 px`.
+
+| Função | Seletor / Heurística | Observações |
+|---|---|---|
+| **Canvas da lâmina** | maior `canvas` com lado ≥ 200px | Marcado com a classe `.pgt-alvo`. Pode ser sobrescrito por um seletor manual no painel. |
+| **Raiz da área de toque** | `canvas.parentElement` | O visualizador sobrepõe `div`s transparentes ao canvas; se o pai for `body`/`html`, usa-se o próprio canvas. |
+| **Elementos a ignorar** | `button, a, input, select, textarea, label, [role="button"], [role="slider"], .pgt-widget` | Toques nesses elementos seguem o fluxo nativo, sem interceptação. |
+
+### 🎨 Elementos do widget de toque
+- **Botão Flutuante**: `#pgt-btn` (`bottom: 20px; left: 20px; z-index: 2147483646`) — à esquerda para não colidir com o `#tp-opcoes-btn` do Telepato.
+- **Painel de Ajustes**: `#pgt-painel` (`bottom: 76px; left: 20px`).
+- **Classe de Escopo**: `.pgt-widget`.
+- **Configuração**: `localStorage["pgt:config:v1"]`.
+
+### ⚠️ Armadilhas desta tela
+
+1. **O visualizador ignora eventos de toque.** Ele escuta `mouse*` e/ou
+   `pointer*` — neste último caso filtrando `pointerType === 'mouse'`. Por isso
+   o script **traduz** o toque em eventos sintéticos de mouse **e** de ponteiro
+   (nessa ordem, como o navegador real faz), em vez de tentar tratar o toque.
+2. **`setPointerCapture()` com `pointerId` sintético lança `InvalidPointerId`**
+   e quebraria o handler do visualizador. `Element.prototype.setPointerCapture`
+   e `releasePointerCapture` são envolvidos em `try/catch` para engolir o erro.
+3. **O zoom é feito por `wheel`**, não por API própria: a pinça vira passos
+   discretos de roda (`deltaY = ±100`, `deltaMode: 0`) disparados no ponto médio
+   entre os dedos. `deltaY` negativo = aproximar.
+4. **`touch-action: none` é obrigatório** no canvas e no contêiner, senão o
+   navegador rouba o gesto para rolar/dar zoom na página.
+5. **A lâmina pode estar dentro de um `iframe`**: o script roda em todos os
+   frames, mas o botão flutuante só é criado no frame que realmente tem o
+   canvas — evita botão duplicado sobreposto.
+6. **O canvas só existe depois que a lâmina carrega**: a detecção é feita por
+   sondagem (`setInterval` de 1,2s), não por `MutationObserver` (ver armadilha 2
+   da seção 5).
+
+### 💻 Detecção da tela
+
+```javascript
+function acharVisualizador() {
+    let melhor = null, maiorArea = 0;
+    for (const c of document.querySelectorAll('canvas')) {
+        const r = c.getBoundingClientRect();
+        if (r.width < 200 || r.height < 200) continue;
+        const area = r.width * r.height;
+        if (area > maiorArea) { maiorArea = area; melhor = c; }
+    }
+    return melhor;
+}
+```
+
+### 🔍 Diagnóstico
+
+`scripts/philips-go-diagnostico-console.js` — cole no console do DevTools com a
+lâmina aberta, faça os gestos e rode `pgtRelatorio()` para descobrir quais
+eventos o visualizador realmente escuta (usa `getEventListeners`, só disponível
+no console do Chrome/Edge).
