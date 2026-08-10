@@ -250,6 +250,42 @@ function acharVisualizador() {
 }
 ```
 
+### 🎮 Controle por gamepad
+
+`scripts/philips-go-gamepad.user.js` reaproveita a mesma camada de emissão de
+eventos — ela é agnóstica à origem, então trocar dedo por analógico não exige
+nada do lado do visualizador.
+
+| Controle | Ação |
+|---|---|
+| Analógico esquerdo | Move a lâmina, velocidade proporcional à inclinação |
+| RT / LT | Aproxima / afasta, gradual (gatilhos são analógicos) |
+| Analógico direito | Move o cursor de ancoragem do zoom |
+| RB / LB | Passo fixo de zoom |
+| Direcional | Deslocamento fixo (varredura sistemática) |
+| A / R3 | Clica no cursor / recentra o cursor |
+
+Particularidades da **Gamepad API**:
+
+1. **Não há evento de eixo** — os analógicos só existem por sondagem. O laço
+   roda em `requestAnimationFrame` (que pausa sozinho com a aba oculta).
+2. **O controle só aparece após um gesto**: por antifingerprinting, o Chrome só
+   expõe o gamepad depois de um botão pressionado com a aba em foco. Sem isso,
+   `navigator.getGamepads()` devolve entradas vazias.
+3. **A aba precisa estar em foco** (`document.hasFocus()`), senão o estado
+   congela.
+4. **Zona morta obrigatória** (~0.15): analógico gasto tem deriva constante, que
+   sem filtro vira um `mousedown` eterno.
+5. **O arrasto precisa reancorar**: pan é `mousedown` segurado + `mousemove`, e
+   num deslocamento longo o ponto sairia da tela. Ao chegar perto da borda,
+   solta, volta ao centro e pressiona de novo — como o pan é relativo ao ponto
+   do `mousedown`, a imagem não salta.
+6. **Zoom em vários passos = vários eventos.** Não se sabe se o visualizador
+   escala pelo valor do delta ou só conta eventos; emitir N eventos de um passo
+   funciona nos dois casos, e é o que uma roda real faz.
+7. **Coordenadas inteiras**: `MouseEvent` trunca `clientX`/`clientY`, então
+   sobra de ponto flutuante vira erro de 1px no destino.
+
 ### 🔍 Diagnóstico
 
 `scripts/philips-go-diagnostico-console.js` — cole no console do DevTools com a
