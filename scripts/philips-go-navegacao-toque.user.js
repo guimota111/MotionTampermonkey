@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Philips GO · Navegação por Toque
 // @namespace    https://github.com/guimota111/MotionTampermonkey
-// @version      1.1.0
+// @version      1.2.0
 // @description  Habilita navegação por toque no visualizador de lâminas do Philips PathologySuite (Telepatologia Dasa): 1 dedo arrasta, pinça dá zoom, toque duplo aproxima. Traduz o toque em eventos de mouse/ponteiro que o visualizador entende.
 // @author       guimota111
 // @match        https://patologia-go01.dasa.com.br/*
@@ -26,6 +26,7 @@
     emitirMouse: true,        // dispara mousedown/mousemove/mouseup
     emitirPonteiro: true,     // dispara pointerdown/pointermove/pointerup (pointerType: mouse)
     zoomComCtrl: false,       // usa Ctrl+roda em vez de roda pura
+    eventosRoda: 'auto',      // 'auto' | 'wheel' | 'mousewheel' | 'todos'
     inverterZoom: false,
     sensibilidadeZoom: 1,     // quantos passos de roda a pinça gera
     autoPasso: true,          // usa o deltaY nativo medido na própria página
@@ -256,18 +257,56 @@
     if (duplo) dispararMouse('dblclick', alvo, x, y, { buttons: 0, detail: 2 });
   }
 
-  function roda(x, y, deltaY) {
-    const alvo = document.elementFromPoint(x, y) || getVisualizador();
-    if (!alvo) return;
-    const ev = new WheelEvent('wheel', base(x, y, {
+  // Uma roda real traz mais coisa do que só o deltaY: `detail` é 0 (e não 1,
+  // como nos demais eventos de mouse) e os campos legados wheelDelta* vêm
+  // preenchidos — normalizadores antigos leem justamente esses. Num evento
+  // sintético eles valem 0 se a gente não passar.
+  function eventoRoda(tipo, alvo, x, y, deltaY) {
+    const wd = Math.round(-deltaY * 1.2); // convenção legada: 120 por "clique" de 100px
+    const ev = new WheelEvent(tipo, base(x, y, {
+      detail: 0,
       deltaX: 0,
       deltaY: deltaY,
       deltaZ: 0,
       deltaMode: cfg.deltaModeNativo || 0,
+      wheelDelta: wd,
+      wheelDeltaX: 0,
+      wheelDeltaY: wd,
       ctrlKey: cfg.zoomComCtrl
     }));
     ev.__pgt = true;
     alvo.dispatchEvent(ev);
+    return ev;
+  }
+
+  function eventoRodaFirefox(alvo, x, y, deltaY) {
+    const ev = new MouseEvent('DOMMouseScroll', base(x, y, {
+      detail: Math.round(deltaY / 40) || (deltaY > 0 ? 1 : -1),
+      ctrlKey: cfg.zoomComCtrl
+    }));
+    ev.__pgt = true;
+    alvo.dispatchEvent(ev);
+  }
+
+  function roda(x, y, deltaY) {
+    const alvo = document.elementFromPoint(x, y) || getVisualizador();
+    if (!alvo) return;
+
+    const modo = cfg.eventosRoda;
+    let tratado = false;
+
+    if (modo !== 'mousewheel') {
+      tratado = eventoRoda('wheel', alvo, x, y, deltaY).defaultPrevented;
+    }
+    // 'auto': só cai no legado se ninguém tratou o `wheel` moderno — assim não
+    // corre o risco de aplicar o zoom duas vezes.
+    if (modo === 'mousewheel' || modo === 'todos' || (modo === 'auto' && !tratado)) {
+      eventoRoda('mousewheel', alvo, x, y, deltaY);
+    }
+    if (modo === 'todos') {
+      eventoRodaFirefox(alvo, x, y, deltaY);
+    }
+    log('roda', deltaY, 'wheel tratado:', tratado, 'modo:', modo);
   }
 
   // passos > 0 aproxima (zoom in); < 0 afasta
@@ -280,7 +319,7 @@
   // =========================================================================
   //  Máquina de estados dos gestos
   // =========================================================================
-  const LIMIAR_ZOOM = 0.14;   // ~10% de variação da distância = 1 passo de roda
+  const LIMIAR_ZOOM = 0.10;   // ~7% de variação da distância = 1 passo de roda
   const TAP_DIST = 14;        // px
   const TAP_MS = 260;
   const DUPLO_TAP_MS = 320;
@@ -627,6 +666,23 @@
     selTD.addEventListener('change', () => { cfg.toqueDuplo = selTD.value; salvar(); });
     linhaTD.append(labTD, selTD);
 
+    // eventos de roda usados pelo zoom
+    const linhaER = document.createElement('div');
+    linhaER.className = 'linha';
+    const labER = document.createElement('label');
+    labER.textContent = 'Eventos de roda';
+    const selER = document.createElement('select');
+    for (const [v, t] of [
+      ['auto', 'Auto'], ['wheel', 'Só wheel'],
+      ['mousewheel', 'Só mousewheel'], ['todos', 'Todos']
+    ]) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = t; o.selected = cfg.eventosRoda === v;
+      selER.appendChild(o);
+    }
+    selER.addEventListener('change', () => { cfg.eventosRoda = selER.value; salvar(); });
+    linhaER.append(labER, selER);
+
     // seletor manual
     const labSel = document.createElement('label');
     labSel.textContent = 'Seletor do visualizador (opcional)';
@@ -647,6 +703,7 @@
     dica.innerHTML = '1 dedo arrasta · 2 dedos dão zoom · toque duplo aproxima · 2 dedos batidos afastam.<br>' +
       'O passo da roda é medido a partir de uma rolagem real na própria página — role uma vez com o mouse/trackpad para calibrar.<br>' +
       'Zoom fraco ou forte demais? Desligue "Passo automático" e ajuste no braço.<br>' +
+      'Zoom não responde? Troque "Eventos de roda" para "Só mousewheel" ou "Todos".<br>' +
       'Arrasto com o dobro da velocidade? Desligue "Eventos de ponteiro".';
 
     painel.append(
@@ -659,6 +716,7 @@
       slider('Passo da roda', 'passoRoda', 1, 300, 1, null, atualizarStatus),
       checkbox('Inverter zoom', 'inverterZoom'),
       checkbox('Zoom com Ctrl+roda', 'zoomComCtrl'),
+      linhaER,
       linhaTD,
       checkbox('Pan com dois dedos', 'panDoisDedos'),
       document.createElement('hr'),
