@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Motion DASA - Copiar Títulos de Macro
 // @namespace    https://motionap.dasa.com.br/
-// @version      1.1
+// @version      1.1.1
 // @description  Ícone de prancheta que copia os títulos das topografias da macro para a área de transferência
 // @author       Guilherme
 // @match        https://motionap.dasa.com.br/*

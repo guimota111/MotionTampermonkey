@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Philips GO · Controle de Gamepad 🎮
 // @namespace    https://github.com/guimota111/MotionTampermonkey
-// @version      1.0.0
+// @version      1.0.1
 // @description  Navegue pela lâmina do Philips PathologySuite com um controle de Xbox: analógico esquerdo move (velocidade proporcional), gatilhos dão zoom gradual, analógico direito posiciona o cursor de ancoragem, bumpers dão passos fixos de zoom e o direcional faz varredura sistemática.
 // @author       guimota111
 // @match        https://patologia-go01.dasa.com.br/*

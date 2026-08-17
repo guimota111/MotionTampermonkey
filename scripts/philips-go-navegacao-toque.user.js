@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Philips GO · Navegação por Toque
 // @namespace    https://github.com/guimota111/MotionTampermonkey
-// @version      1.2.0
+// @version      1.2.1
 // @description  Habilita navegação por toque no visualizador de lâminas do Philips PathologySuite (Telepatologia Dasa): 1 dedo arrasta, pinça dá zoom, toque duplo aproxima. Traduz o toque em eventos de mouse/ponteiro que o visualizador entende.
 // @author       guimota111
 // @match        https://patologia-go01.dasa.com.br/*
