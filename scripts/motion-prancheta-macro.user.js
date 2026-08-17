@@ -6,6 +6,8 @@
 // @author       Guilherme
 // @match        https://motionap.dasa.com.br/*
 // @grant        GM_addStyle
+// @updateURL    https://raw.githubusercontent.com/guimota111/MotionTampermonkey/main/scripts/motion-prancheta-macro.user.js
+// @downloadURL  https://raw.githubusercontent.com/guimota111/MotionTampermonkey/main/scripts/motion-prancheta-macro.user.js
 // ==/UserScript==
 
 (function() {

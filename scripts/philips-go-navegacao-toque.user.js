@@ -10,6 +10,8 @@
 // @match        https://patologia-sp01.dasa.com.br/*
 // @run-at       document-idle
 // @grant        none
+// @updateURL    https://raw.githubusercontent.com/guimota111/MotionTampermonkey/main/scripts/philips-go-navegacao-toque.user.js
+// @downloadURL  https://raw.githubusercontent.com/guimota111/MotionTampermonkey/main/scripts/philips-go-navegacao-toque.user.js
 // ==/UserScript==
 
 /* eslint-env browser */
