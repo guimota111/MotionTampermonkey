@@ -32,15 +32,36 @@ function ehPaginaLiberacao() {
 
 ## 2. 📑 Primeira Página de Casos HE (`RMACRO`) (`https://motionap.dasa.com.br/*`)
 
-Usado por scripts como **Ícone de Prancheta para Macro**.
+Usado pelo script **Ícone de Prancheta para Macro**
+(`scripts/motion-prancheta-macro.user.js`).
 
 ### 🎯 Elementos de Ancoragem (DOM)
 
 | Função | Seletor CSS / RegEx | Descrição / Observações |
 |---|---|---|
 | **Verificar se é página de RMACRO** | `div.tituloTesteNome` | Deve ter o texto `.textContent.trim() === 'RMACRO'`. Indica a 1ª página de casos HE. |
-| **Campo do Laudo / Macro** | `textarea#laudoFormatado` ou `textarea.laudo-texto` | Textarea onde a descrição macroscópica está digitada. |
+| **Campo do Laudo / Macro** | `textarea.areaResultadoOriginalText` | Textarea onde a descrição macroscópica está digitada. É o seletor que o script usa em produção. |
+| **Botão da prancheta** | `#motion-copy-btn` | Inserido como irmão seguinte do `div.tituloTesteNome` do RMACRO. |
 | **Captura de Cassetes / Blocos** | RegEx: `/^[A-Z]+\)/` ou `/^[A-Z]\d+:/` | Identifica blocos de cassetes no texto (ex: `A)`, `B)`, `A1:`, `A1 a A5:`). |
+| **Título de topografia** | RegEx: `/^[A-Z]+\)[^:]*:/` | Pega `A) Mama direita:` de dentro da linha inteira do frasco. |
+
+### ⚠️ Armadilha: a frase de abertura da macro
+
+A macro costuma (mas não sempre) começar com uma frase de apresentação do
+material — ex.: `Recebido para exame dois frascos, com o material a seguir:`.
+Ela **também** termina em `:` e começa com maiúscula, então qualquer heurística
+do tipo "primeira linha terminada em dois-pontos é o título" a captura junto com
+os títulos verdadeiros.
+
+A extração é feita em duas passadas:
+
+1. **Títulos por frasco** (`A) …:`, `AB) …:`). Se existir ao menos um, a frase de
+   abertura é ignorada por construção — ela nunca tem letra de frasco.
+2. **Frasco único, sem letra**: só então vale a primeira linha terminada em `:`,
+   e ainda assim depois de descartar as frases de abertura conhecidas
+   (`Recebido…`, `Recebemos…`, `Enviados…`, qualquer linha com `para exame`,
+   `frasco(s)`, `recipiente(s)`, ou terminada em `a seguir:` / `abaixo:` /
+   `assim discriminados:` / `identificados como:`).
 
 ### 💻 Exemplo de Código para Detecção de RMACRO
 ```javascript
